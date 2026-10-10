@@ -1,0 +1,14 @@
+{
+  "name": "darkroom",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "pnpm --filter @darkroom/desktop tauri:dev",
+    "build": "pnpm --filter @darkroom/desktop tauri:build && ./scripts/make-dmg.sh",
+    "web": "pnpm --filter @darkroom/desktop dev",
+    "test": "pnpm -r test && pnpm test:rust",
+    "test:rust": "cd apps/desktop/src-tauri && PATH=/opt/homebrew/opt/rustup/bin:$PATH cargo test --release",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

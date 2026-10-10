@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+minimumReleaseAgeExclude:
+  - '@tauri-apps/api@2.12.2'
+  - '@anthropic-ai/sdk'
+onlyBuiltDependencies:
+  - esbuild
