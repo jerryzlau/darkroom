@@ -46,6 +46,11 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# rawler's CR2 sRAW/mRAW dummy decode trips a debug assertion on an uninitialised
+# buffer; release builds never see it, so dev builds match release here.
+[profile.dev.package.rawler]
+debug-assertions = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"

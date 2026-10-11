@@ -8,6 +8,8 @@ use crate::state::AppState;
 use crate::{metadata, thumbs, xmp};
 use rayon::prelude::*;
 use serde::Serialize;
+use std::any::Any;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -63,6 +65,17 @@ pub fn scan(paths: &[PathBuf]) -> Vec<Candidate> {
     out
 }
 
+/// Text of a caught panic payload (`panic!` produces `&str` or `String`).
+fn panic_msg(p: Box<dyn Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = p.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
 pub type ProgressFn<'a> = &'a (dyn Fn(ImportProgress) + Sync);
 
 /// Import synchronously (used by the background thread and by tests).
@@ -107,7 +120,12 @@ pub fn import_paths(state: &AppState, paths: &[PathBuf], progress: ProgressFn) -
         .par_iter()
         .map(|(i, existing)| {
             let c = &cands[*i];
-            let r = metadata::read_meta(&c.path, c.format).map_err(|e| format!("{}: {e}", c.path.display()));
+            // Third-party decoders (rawler, image) can panic on unusual files; one bad
+            // file must not abort the whole import, so a panic becomes a per-file error.
+            let r = match catch_unwind(AssertUnwindSafe(|| metadata::read_meta(&c.path, c.format))) {
+                Ok(r) => r.map_err(|e| format!("{}: {e}", c.path.display())),
+                Err(p) => Err(format!("{}: decoder panicked: {}", c.path.display(), panic_msg(p))),
+            };
             let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n % 25 == 0 {
                 progress(ImportProgress { phase: "metadata".into(), done: n, total: todo.len(), message: String::new() });
@@ -183,23 +201,32 @@ pub fn import_paths(state: &AppState, paths: &[PathBuf], progress: ProgressFn) -
         message: format!("Imported {} of {} files", summary.added + summary.updated, total),
     });
     let done = std::sync::atomic::AtomicUsize::new(0);
+    let thumb_panics = parking_lot::Mutex::new(Vec::<String>::new());
     let ok_ids: Vec<i64> = thumb_jobs
         .par_iter()
         .filter_map(|(id, path, fmt)| {
-            let r = thumbs::generate(&state.cache_dir, *id, path, fmt);
+            // Same as the metadata pass: a decoder panic only loses this thumbnail.
+            let r = catch_unwind(AssertUnwindSafe(|| thumbs::generate(&state.cache_dir, *id, path, fmt)));
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n % 8 == 0 || n == thumb_jobs.len() {
                 progress(ImportProgress { phase: "thumbnails".into(), done: n, total: thumb_jobs.len(), message: String::new() });
             }
             match r {
-                Ok(()) => Some(*id),
-                Err(e) => {
+                Ok(Ok(())) => Some(*id),
+                Ok(Err(e)) => {
                     log::warn!("thumbnail {}: {e}", path.display());
+                    None
+                }
+                Err(p) => {
+                    let msg = panic_msg(p);
+                    log::warn!("thumbnail {}: decoder panicked: {msg}", path.display());
+                    thumb_panics.lock().push(format!("{} (thumbnail): decoder panicked: {msg}", path.display()));
                     None
                 }
             }
         })
         .collect();
+    summary.errors.extend(thumb_panics.into_inner());
     {
         let conn = state.db.lock();
         for id in &ok_ids {
@@ -216,17 +243,29 @@ pub fn spawn(app: AppHandle, paths: Vec<PathBuf>) {
         let emit = |p: ImportProgress| {
             let _ = app.emit("import:progress", p);
         };
-        let result = import_paths(&state, &paths, &emit);
-        match result {
-            Ok((summary, _)) => {
-                let _ = app.emit("import:done", summary);
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "import:done",
-                    ImportSummary { errors: vec![e.to_string()], ..Default::default() },
-                );
-            }
-        }
+        // Per-file panics are caught inside; this catches anything else so the UI
+        // always gets `import:done` and never waits on a dead thread.
+        let result = catch_unwind(AssertUnwindSafe(|| import_paths(&state, &paths, &emit)));
+        let summary = match result {
+            Ok(Ok((summary, _))) => summary,
+            Ok(Err(e)) => ImportSummary { errors: vec![e.to_string()], ..Default::default() },
+            Err(p) => ImportSummary { errors: vec![format!("import panicked: {}", panic_msg(p))], ..Default::default() },
+        };
+        let _ = app.emit("import:done", summary);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panic_msg_reads_str_and_string_payloads() {
+        let p = catch_unwind(|| panic!("static")).unwrap_err();
+        assert_eq!(panic_msg(p), "static");
+        let p = catch_unwind(|| panic!("formatted {}", 7)).unwrap_err();
+        assert_eq!(panic_msg(p), "formatted 7");
+        let p = catch_unwind(|| std::panic::panic_any(42u32)).unwrap_err();
+        assert_eq!(panic_msg(p), "unknown");
+    }
 }
