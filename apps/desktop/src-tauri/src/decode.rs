@@ -142,6 +142,12 @@ pub fn decode_raw(path: &Path) -> AppResult<SourceImage> {
     let raw = decoder.raw_image(&src, &params, false)?;
     let orientation = raw.orientation.to_u16();
 
+    if raw.cpp == 3 && raw.clean_make == "Canon" {
+        if let Some(img) = decode_canon_sraw(&src, &raw, orientation)? {
+            return Ok(img);
+        }
+    }
+
     let xyz_to_cam = raw_xyz_to_cam(&raw);
     let steps = [
         ProcessingStep::Rescale,
@@ -193,6 +199,147 @@ pub fn decode_raw(path: &Path) -> AppResult<SourceImage> {
     };
     let (data, w, h) = orient_rgb(&data, w, h, orientation);
     Ok(SourceImage { width: w, height: h, data, color })
+}
+
+/// Read the Canon "sRAW WB" coefficients (ColorData makernote entry, u16
+/// indices 78..=81), mirroring rawler's `Cr2Decoder::get_sraw_wb`.
+fn read_canon_sraw_wb(src: &RawSource) -> Option<[f32; 3]> {
+    use rawler::formats::tiff::reader::TiffReader;
+    use rawler::formats::tiff::{GenericTiffReader, IFD};
+    use rawler::tags::TiffCommonTag;
+
+    let tiff = match GenericTiffReader::new(&mut src.reader(), 0, 0, None, &[33424]) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("sRAW: cannot parse TIFF structure: {e:?}");
+            return None;
+        }
+    };
+    let root = tiff.root_ifd();
+    let exif = root
+        .sub_ifds()
+        .get(&TiffCommonTag::ExifIFDPointer.into())
+        .and_then(|s| s.first())
+        .unwrap_or(root);
+    let offset = exif.get_entry(TiffCommonTag::Makernote)?.offset()?;
+    let makernote = match IFD::new(&mut src.reader(), offset as u32, 0, 0, exif.endian, &[]) {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("sRAW: cannot parse makernote: {e:?}");
+            return None;
+        }
+    };
+    const COLOR_DATA: u16 = 0x4001;
+    let levels = match makernote.get_entry_raw(COLOR_DATA, &mut src.reader()) {
+        Ok(Some(l)) => l,
+        Ok(None) => return None,
+        Err(e) => {
+            log::warn!("sRAW: cannot read ColorData: {e:?}");
+            return None;
+        }
+    };
+    let o = 78;
+    Some([
+        levels.get_force_u16(o) as f32,
+        (levels.get_force_u16(o + 1) as f32 + levels.get_force_u16(o + 2) as f32) / 2.0,
+        levels.get_force_u16(o + 3) as f32,
+    ])
+}
+
+/// Decode a Canon sRAW/mRAW CR2 (3 components per pixel) ourselves.
+///
+/// rawler 0.8.0 converts the YCbCr lossless-JPEG data to RGB and multiplies
+/// each channel by an integer gain derived from the ColorData "sRAW WB"
+/// entry. For bodies with the `invert_sraw_wb` camera hint (5D III/IV, 6D,
+/// 80D, 1DX II, 5DS, ...) it inverts the R/B gains (see dnglab issue #842),
+/// then `Rescale` subtracts one black level from every channel after those
+/// unequal gains, and the regular path applies white balance and the camera
+/// matrix on top. The result is a strong teal/green (or magenta) cast.
+///
+/// The YCbCr->RGB output of an sRAW is in fact already white-balanced,
+/// display-space (sRGB-primaries) linear RGB. So we undo rawler's per-channel
+/// gains, subtract the black level in that space, normalise to the white
+/// level, and skip both white balance and the camera matrix.
+///
+/// Returns `Ok(None)` when the needed metadata is missing so the caller can
+/// fall back to the generic path.
+fn decode_canon_sraw(src: &RawSource, raw: &rawler::RawImage, orientation: u16) -> AppResult<Option<SourceImage>> {
+    use rawler::RawImageData;
+    use rayon::prelude::*;
+
+    let Some(coef) = read_canon_sraw_wb(src) else {
+        log::warn!("sRAW: no sRAW WB in ColorData; using generic raw path");
+        return Ok(None);
+    };
+    if coef.iter().any(|c| !c.is_finite() || *c <= 0.0) {
+        log::warn!("sRAW: invalid sRAW WB {coef:?}; using generic raw path");
+        return Ok(None);
+    }
+    let invert = raw.camera.find_hint("invert_sraw_wb");
+    let gain = |v: f32| if invert { (1024.0f32 * 1024.0 / v) as i32 } else { v as i32 };
+    let c = [gain(coef[0]), coef[1] as i32, gain(coef[2])];
+    if c.iter().any(|v| *v <= 0) {
+        log::warn!("sRAW: invalid gains {c:?}; using generic raw path");
+        return Ok(None);
+    }
+
+    let g_gain = c[1] as f64 / 256.0;
+    let bl = &raw.blacklevel.levels;
+    let black16 = if bl.is_empty() {
+        0.0
+    } else {
+        bl.iter().map(|r| if r.d == 0 { 0.0 } else { r.n as f64 / r.d as f64 }).sum::<f64>() / bl.len() as f64
+    };
+    let black_y = black16 / g_gain;
+    let white_y = match raw.whitelevel.0.first() {
+        Some(w) => *w as f64 / g_gain,
+        None => return Ok(None),
+    };
+    if !(white_y > black_y) {
+        log::warn!("sRAW: white {white_y} <= black {black_y}; using generic raw path");
+        return Ok(None);
+    }
+
+    let data = match &raw.data {
+        RawImageData::Integer(v) => v,
+        _ => return Ok(None),
+    };
+    let (rw, rh) = (raw.width, raw.height);
+    if data.len() != rw * rh * 3 {
+        log::warn!("sRAW: unexpected buffer size {} for {}x{}x3; using generic raw path", data.len(), rw, rh);
+        return Ok(None);
+    }
+
+    let (x0, y0, w, h) = match raw.crop_area {
+        Some(r) if r.d.w > 0 && r.d.h > 0 && r.p.x + r.d.w <= rw && r.p.y + r.d.h <= rh => (r.p.x, r.p.y, r.d.w, r.d.h),
+        _ => (0, 0, rw, rh),
+    };
+
+    let scale = [256.0 / c[0] as f64, 256.0 / c[1] as f64, 256.0 / c[2] as f64];
+    let inv_range = 1.0 / (white_y - black_y);
+    let mut out = vec![0u16; w * h * 3];
+    out.par_chunks_exact_mut(w * 3).enumerate().for_each(|(y, row)| {
+        let s = (y0 + y) * rw * 3 + x0 * 3;
+        let srow = &data[s..s + w * 3];
+        for (i, (o, v)) in row.iter_mut().zip(srow).enumerate() {
+            let p = *v as f64 * scale[i % 3];
+            let lin = ((p - black_y) * inv_range).clamp(0.0, 1.0);
+            *o = (lin * 65535.0 + 0.5) as u16;
+        }
+    });
+
+    log::info!(
+        "sRAW {} {}: coef={:?} invert={} gains={:?} black_y={:.1} white_y={:.1} {}x{}",
+        raw.clean_make, raw.clean_model, coef, invert, c, black_y, white_y, w, h
+    );
+
+    let (data, w, h) = orient_rgb(&out, w, h, orientation);
+    Ok(Some(SourceImage {
+        width: w,
+        height: h,
+        data,
+        color: SourceColor { is_raw: true, xyz_to_cam: XYZ_TO_SRGB, as_shot_mul: [1.0, 1.0, 1.0], space: "srgb".into() },
+    }))
 }
 
 #[inline]
