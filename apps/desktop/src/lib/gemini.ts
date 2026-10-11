@@ -333,7 +333,12 @@ export function describeGeminiError(err: unknown): string {
     return 'The Google AI API key was rejected. Check it in Settings.';
   }
   if (status === 429 || has(/\b429\b|RESOURCE_EXHAUSTED|quota/i)) {
-    return 'Rate limit or quota exceeded. Image output needs a paid key; try again shortly.';
+    // Image models have no free tier: a key from a project without billing gets "limit: 0".
+    if (has(/free_tier|limit:\s*0\b|billing/i)) {
+      return 'This Google AI key has no image quota. Image models need a project with billing enabled: in Google AI Studio, open API keys, link the key to a Cloud project with billing, then try again.';
+    }
+    const detail = /"message"\s*:\s*"([^"]{10,220})/.exec(msg)?.[1] ?? '';
+    return `Rate limit or quota exceeded; try again shortly.${detail ? ` (${detail})` : ''}`;
   }
   if (status === 404 || has(/\b404\b|not found|NOT_FOUND/i)) {
     const id = /models\/([\w.-]+)/.exec(msg)?.[1];

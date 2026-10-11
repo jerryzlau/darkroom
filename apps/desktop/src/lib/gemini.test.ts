@@ -200,7 +200,11 @@ describe('describeGeminiError', () => {
     [abort, 'Stopped.'],
     [new Error('got status: 400 API key not valid. Please pass a valid API key.'), 'The Google AI API key was rejected. Check it in Settings.'],
     [Object.assign(new Error('forbidden'), { status: 403 }), 'The Google AI API key was rejected. Check it in Settings.'],
-    [new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}'), 'Rate limit or quota exceeded. Image output needs a paid key; try again shortly.'],
+    [new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}'), 'Rate limit or quota exceeded; try again shortly.'],
+    [
+      new Error('{"error":{"code":429,"message":"You exceeded your current quota. Quota exceeded for metric: generate_content_free_tier_requests, limit: 0","status":"RESOURCE_EXHAUSTED"}}'),
+      /no image quota.*billing/,
+    ],
     [
       new Error('got status: 404 . models/gemini-foo-9 is not found for API version v1beta'),
       'Model "gemini-foo-9" is not available for this key.',
@@ -211,7 +215,8 @@ describe('describeGeminiError', () => {
     [new Error('  something odd  '), 'something odd'],
     ['plain string', 'plain string'],
   ])('%s', (err, expected) => {
-    expect(describeGeminiError(err)).toBe(expected);
+    if (expected instanceof RegExp) expect(describeGeminiError(err)).toMatch(expected);
+    else expect(describeGeminiError(err)).toBe(expected);
   });
 
   it('trims long messages to 300 chars', () => {
