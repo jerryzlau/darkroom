@@ -42,7 +42,7 @@ function pointInPolygon(p: Pt, poly: Pt[]): boolean {
 
 /**
  * Store a polygon drawn in CSS px as a selection: replace the active shape
- * mask's polygon while it has no adjustments yet, otherwise add a new one.
+ * mask's polygon while it has no adjustments or fill yet, otherwise add a new one.
  */
 export function commitSelection(mapper: ViewMapper, css: Pt[]) {
   const uv = css.map(([x, y]) => {
@@ -53,7 +53,9 @@ export function commitSelection(mapper: ViewMapper, css: Pt[]) {
   const masks = s.params.masks;
   const idx = masks.findIndex((m) => m.id === s.activeMaskId);
   const act = idx >= 0 ? masks[idx] : null;
-  if (act && act.kind === 'shape' && isAllZero(act.adj)) {
+  // A selection that drives a generative fill is in use too: moving it would move the fill.
+  const hasFill = act ? s.params.patches.some((x) => x.maskId === act.id) : false;
+  if (act && act.kind === 'shape' && isAllZero(act.adj) && !hasFill) {
     s.setAndCommit((p) => {
       p.masks[idx].shape.points = uv;
     }, 'Edit Selection');
