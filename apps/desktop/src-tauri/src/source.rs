@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const PREVIEW_SIZE: usize = 2560;
-const PREVIEW_CACHE_VERSION: u32 = 1;
+/// Bump whenever the decoder's output changes (cached previews are keyed by it).
+/// 2: Canon sRAW/mRAW colour fix.
+const PREVIEW_CACHE_VERSION: u32 = 2;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
