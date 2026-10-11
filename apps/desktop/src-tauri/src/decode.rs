@@ -256,10 +256,11 @@ fn read_canon_sraw_wb(src: &RawSource) -> Option<[f32; 3]> {
 /// unequal gains, and the regular path applies white balance and the camera
 /// matrix on top. The result is a strong teal/green (or magenta) cast.
 ///
-/// The YCbCr->RGB output of an sRAW is in fact already white-balanced,
-/// display-space (sRGB-primaries) linear RGB. So we undo rawler's per-channel
-/// gains, subtract the black level in that space, normalise to the white
-/// level, and skip both white balance and the camera matrix.
+/// The YCbCr->RGB output of an sRAW is already white-balanced camera-space
+/// linear RGB. So we undo rawler's per-channel gains, subtract the black
+/// level in that space, normalise to the white level, and hand the engine
+/// un-balanced camera values with the as-shot multipliers and camera matrix
+/// like any other raw.
 ///
 /// Returns `Ok(None)` when the needed metadata is missing so the caller can
 /// fall back to the generic path.
@@ -333,13 +334,35 @@ fn decode_canon_sraw(src: &RawSource, raw: &rawler::RawImage, orientation: u16) 
         raw.clean_make, raw.clean_model, coef, invert, c, black_y, white_y, w, h
     );
 
+    // The values are white-balanced camera-space RGB (the camera applied its
+    // as-shot multipliers before the YCbCr encode) but still in the sensor's
+    // primaries: the camera matrix is needed for correct saturation. Divide the
+    // as-shot multipliers back out so the engine's normal raw path (as-shot
+    // multipliers, then the white-preserving camera matrix) reproduces the
+    // balanced values and custom white balance behaves like any other raw.
+    let wb = raw.wb_coeffs;
+    let mul = if wb[0].is_finite() && wb[1].is_finite() && wb[2].is_finite() && wb[0] > 0.0 && wb[1] > 0.0 && wb[2] > 0.0 {
+        Some([wb[0] / wb[1], 1.0, wb[2] / wb[1]])
+    } else {
+        None
+    };
+    let color = match (raw_xyz_to_cam(raw), mul) {
+        (Some(m), Some(mul)) => {
+            let inv = [1.0 / mul[0] as f64, 1.0, 1.0 / mul[2] as f64];
+            out.par_chunks_exact_mut(3).for_each(|px| {
+                px[0] = (px[0] as f64 * inv[0] + 0.5) as u16;
+                px[2] = (px[2] as f64 * inv[2] + 0.5) as u16;
+            });
+            SourceColor { is_raw: true, xyz_to_cam: m, as_shot_mul: mul, space: "camera".into() }
+        }
+        _ => {
+            log::warn!("sRAW: no camera matrix or WB; treating as sRGB");
+            SourceColor { is_raw: true, xyz_to_cam: XYZ_TO_SRGB, as_shot_mul: [1.0, 1.0, 1.0], space: "srgb".into() }
+        }
+    };
+
     let (data, w, h) = orient_rgb(&out, w, h, orientation);
-    Ok(Some(SourceImage {
-        width: w,
-        height: h,
-        data,
-        color: SourceColor { is_raw: true, xyz_to_cam: XYZ_TO_SRGB, as_shot_mul: [1.0, 1.0, 1.0], space: "srgb".into() },
-    }))
+    Ok(Some(SourceImage { width: w, height: h, data, color }))
 }
 
 #[inline]
