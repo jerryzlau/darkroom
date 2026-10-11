@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false
 minimumReleaseAgeExclude:
   - '@tauri-apps/api@2.12.2'
   - '@anthropic-ai/sdk'

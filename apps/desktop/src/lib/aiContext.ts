@@ -55,6 +55,7 @@ function describe(sel: ReturnType<typeof activeSelection>, withOverlay: boolean,
     lines.push(`Masks present: ${p.masks.length} (see "masks" in the settings). No active selection.`);
   }
   if (p.spots.length) lines.push(`Spot removals present (not editable by you): ${p.spots.length}`);
+  if (p.patches.length) lines.push(`Generative fills present (not editable by you): ${p.patches.length}`);
   if (histogram) lines.push(histogram);
   lines.push('', 'Current settings:', JSON.stringify(compactParams(p)));
   return lines.join('\n');

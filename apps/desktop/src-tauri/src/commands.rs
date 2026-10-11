@@ -4,7 +4,7 @@ use crate::db::{self, Collection, Folder, HistoryEntry, ImageQuery, ImageRow, Pr
 use crate::error::{AppError, AppResult};
 use crate::export::{self, ExportJob, ExportSpec};
 use crate::state::AppState;
-use crate::{import, source, thumbs, xmp};
+use crate::{import, patches, source, thumbs, xmp};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -373,6 +373,24 @@ pub fn save_edit_thumb(state: State<'_, AppState>, request: Request<'_>) -> Cmd<
     }
     std::fs::write(&out, body)?;
     db::bump_thumb_rev(&state.db.lock(), image_id)
+}
+
+/// Store a generative-fill PNG (raw body) in the content-addressed patch store. Returns its sha256 hex.
+#[tauri::command]
+pub fn save_patch(state: State<'_, AppState>, request: Request<'_>) -> Cmd<String> {
+    let body = raw_body(&request)?;
+    patches::save(&state.data_dir, &body)
+}
+
+/// Read a stored generative-fill PNG by hash.
+#[tauri::command]
+pub async fn get_patch(app: AppHandle, hash: String) -> Cmd<Response> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        Ok(Response::new(patches::read(&state.data_dir, &hash)?))
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { computeHistogram, cropUvToSource, Engine, type DetailRequest, type Layout } from '../engine/Engine';
 import { parseRegion, sampleCamera } from '../engine/source';
 import { backend } from '../ipc/backend';
+import { primePatchAssets } from '../lib/patchAssets';
 import { setRedraw, setEngine } from '../state/engineHub';
 import { setThumbnailer, useDevelop } from '../state/develop';
 import { useLibrary } from '../state/library';
@@ -103,6 +104,8 @@ export function DevelopCanvas({ readOnly = false }: { readOnly?: boolean }) {
       const s = useDevelop.getState();
       const e = engineRef.current;
       if (!e || !s.source) return;
+      // upload cached fill PNGs; ones still loading trigger a redraw on arrival
+      primePatchAssets(s.params, e, request);
       e.sync(s.source, s.params, s.base);
       loadedSource.current = s.source;
       let lay: Layout | null = null;

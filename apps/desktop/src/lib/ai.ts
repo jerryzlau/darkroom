@@ -450,7 +450,7 @@ Bands and white balance:
 - Color mixer (hsl.hue/sat/lum) and bwMix take objects keyed by band: red, orange, yellow, green, aqua, blue, purple, magenta. Include only bands you change.
 - White balance: wb.temp is the Kelvin of the light being corrected for, so raising it makes the photo warmer. Setting temp or tint switches wb to custom; {"mode":"asShot"} restores the camera value.
 
-Things you cannot do: creating or reshaping masks, spot removal/retouching, point tone curves, adding or removing objects, generative edits. If a request needs one of these, say so briefly and offer the closest adjustment you can make.`;
+Things you cannot do: creating or reshaping masks, spot removal/retouching, point tone curves, adding or removing objects, generative edits (the user can do those in the Generate tab). If a request needs one of these, say so briefly and offer the closest adjustment you can make.`;
 
 export const SYSTEM_PROMPT = `You are the AI Edit assistant inside Darkroom, a local, non-destructive photo editor modeled on Lightroom's Develop module. The user describes how they want their photo to look and you change its develop settings.
 

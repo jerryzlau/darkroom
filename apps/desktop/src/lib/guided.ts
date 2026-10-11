@@ -130,7 +130,7 @@ export function sanitizeOptions(p: Proposal, committed: EditParams, base: EditPa
 // ---------------------------------------------------------------------------
 
 const SECTION_NAMES = Object.keys(SECTIONS) as SectionName[];
-const NEVER_IN_FILTER: readonly SectionName[] = ['masks', 'spots', 'crop'];
+const NEVER_IN_FILTER: readonly SectionName[] = ['masks', 'spots', 'crop', 'patches'];
 
 /** Sections whose values differ between `a` and `b`, in SECTIONS order. */
 export function diffSections(a: EditParams, b: EditParams): SectionName[] {

@@ -59,6 +59,10 @@ export interface Backend {
   getRegion(photoId: number, x: number, y: number, w: number, h: number, ow: number, oh: number): Promise<ArrayBuffer>;
   saveEditThumb(imageId: number, jpeg: Uint8Array): Promise<number>;
   resetEditThumb(imageId: number): Promise<void>;
+  /** Content-addressed generative-fill PNG store: saves the bytes and returns their sha256 hex (idempotent). */
+  savePatch(png: Uint8Array): Promise<string>;
+  /** Read a PNG from the patch store by its sha256 hex hash. */
+  getPatch(hash: string): Promise<ArrayBuffer>;
   exportBegin(spec: ExportSpec): Promise<number>;
   exportTile(job: number, x: number, y: number, w: number, h: number, data: Uint8Array): Promise<void>;
   exportFinish(job: number): Promise<string>;

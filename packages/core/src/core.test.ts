@@ -8,6 +8,7 @@ import {
   monotoneSpline, bakeCurveLUT, parametricCurve,
   cropToSource, sourceToCrop, constrainCrop, maxCrop, frameToSource, sourceToFrame, cropPixelDims,
   BUILTIN_PRESETS, type Mat3,
+  patchN, maskBounds, MAX_PATCHES,
 } from './index';
 
 const close = (a: number, b: number, eps = 1e-4) => expect(Math.abs(a - b)).toBeLessThan(eps);
@@ -96,7 +97,7 @@ describe('shape masks', () => {
   it('migrates v1 docs to v2 with a default shape', () => {
     const v1 = { version: 1, masks: [{ id: 'a', kind: 'radial', name: 'R' }] };
     const mig = migrateParams(v1) as { version: number; masks: { shape: unknown }[] };
-    expect(mig.version).toBe(2);
+    expect(mig.version).toBe(PARAMS_VERSION);
     expect(mig.masks[0].shape).toEqual({ points: [], feather: DEFAULT_SHAPE_FEATHER });
     expect(v1.masks[0]).not.toHaveProperty('shape');
     const p = normalizeParams(v1);
@@ -275,5 +276,112 @@ describe('geometry', () => {
     const c = maxCrop(geo, src, 1);
     const px = cropPixelDims({ ...geo, crop: c }, src);
     close(px.w / px.h, 1, 0.01);
+  });
+});
+
+const HASH = 'a'.repeat(64);
+
+describe('patches', () => {
+  it('migrates v2 docs to v3 with empty patches', () => {
+    const mig = migrateParams({ version: 2, exposure: 1 }) as { version: number; patches: unknown };
+    expect(mig.version).toBe(3);
+    expect(mig.patches).toEqual([]);
+    expect(normalizeParams({ version: 2 }).patches).toEqual([]);
+    expect(defaultParams().patches).toEqual([]);
+  });
+  it('rejects bad hashes and missing rects', () => {
+    expect(patchN({ asset: 'xyz', rect: [0, 0, 1, 1] })).toBeNull();
+    expect(patchN({ asset: 'A'.repeat(64), rect: [0, 0, 1, 1] })).toBeNull();
+    expect(patchN({ asset: HASH })).toBeNull();
+    expect(patchN({ asset: HASH, rect: [0, 0, 0, 1] })).toBeNull();
+    expect(patchN({ asset: HASH, rect: [0, 0, 1, NaN] })).toBeNull();
+  });
+  it('keeps a valid patch with defaults', () => {
+    const p = patchN({ asset: HASH, rect: [0.1, 0.2, 0.3, 0.4] })!;
+    expect(p).not.toBeNull();
+    expect(p.rect).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expect(p.area).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expect(p.opacity).toBe(1);
+    expect(p.enabled).toBe(true);
+    expect(p.feather).toBe(0.02);
+    expect(p.maskId).toBeNull();
+    expect(p.ev).toBe(0);
+    expect(p.prompt).toBe('');
+    expect(typeof p.id).toBe('string');
+  });
+  it('clamps values', () => {
+    const p = patchN({ asset: HASH, rect: [-0.5, 2, 3, 0.5], opacity: 7, ev: 10, feather: 2, maskId: 'm1' })!;
+    expect(p.rect).toEqual([0, 1, 1, 0.5]);
+    expect(p.opacity).toBe(1);
+    expect(p.ev).toBe(4);
+    expect(p.feather).toBe(0.5);
+    expect(p.maskId).toBe('m1');
+    expect(patchN({ asset: HASH, rect: [0, 0, 1, 1], opacity: -1 })!.opacity).toBe(0);
+  });
+  it('caps at MAX_PATCHES and drops garbage in normalizeParams', () => {
+    const many = Array.from({ length: MAX_PATCHES + 5 }, () => ({ asset: HASH, rect: [0, 0, 0.5, 0.5] }));
+    const p = normalizeParams({ version: PARAMS_VERSION, patches: [...many, { nope: 1 }] });
+    expect(p.patches).toHaveLength(MAX_PATCHES);
+  });
+  it('pickSections returns patches', () => {
+    const p = defaultParams();
+    p.patches.push(patchN({ asset: HASH, rect: [0, 0, 1, 1] })!);
+    const part = pickSections(p, ['patches']);
+    expect(part.patches).toEqual(p.patches);
+    expect(Object.keys(part)).toEqual(['patches']);
+  });
+});
+
+describe('maskBounds', () => {
+  const info = { width: 2000, height: 1000 }; // long = width
+  it('shape with feather', () => {
+    const m = newMask('shape', 0);
+    m.shape = { points: [[0.2, 0.3], [0.6, 0.3], [0.4, 0.7]], feather: 0.05 };
+    const b = maskBounds(m, info)!;
+    close(b.minX, 0.15); close(b.maxX, 0.65);
+    close(b.minY, 0.2); close(b.maxY, 0.8);
+  });
+  it('empty shape is null', () => {
+    const m = newMask('shape', 0);
+    expect(maskBounds(m, info)).toBeNull();
+    m.shape.points = [[0.1, 0.1], [0.2, 0.2]];
+    expect(maskBounds(m, info)).toBeNull();
+  });
+  it('brush unions non-erase strokes', () => {
+    const m = newMask('brush', 0);
+    m.brush.strokes = [
+      { points: [[0.3, 0.3], [0.4, 0.35]], size: 0.02, feather: 0.5, flow: 1, erase: false },
+      { points: [[0.6, 0.5]], size: 0.01, feather: 0.5, flow: 1, erase: false },
+      { points: [[0.95, 0.95]], size: 0.1, feather: 0.5, flow: 1, erase: true },
+    ];
+    const b = maskBounds(m, info)!;
+    close(b.minX, 0.28); close(b.minY, 0.26);
+    close(b.maxX, 0.61); close(b.maxY, 0.52);
+    m.brush.strokes = [m.brush.strokes[2]];
+    expect(maskBounds(m, info)).toBeNull();
+  });
+  it('rotated radial', () => {
+    const m = newMask('radial', 0);
+    m.radial = { cx: 0.5, cy: 0.5, rx: 0.2, ry: 0.1, angle: 90, feather: 50 };
+    const b = maskBounds(m, info)!;
+    close(b.minX, 0.4); close(b.maxX, 0.6); // hx = 0.1 (long units) -> 0.1 UV
+    close(b.minY, 0.1); close(b.maxY, 0.9); // hy = 0.2 -> 0.4 UV
+    m.radial.angle = 0;
+    const c = maskBounds(m, info)!;
+    close(c.minX, 0.3); close(c.maxX, 0.7);
+    close(c.minY, 0.3); close(c.maxY, 0.7);
+  });
+  it('linear is null', () => {
+    expect(maskBounds(newMask('linear', 0), info)).toBeNull();
+  });
+  it('clamps at the image edge', () => {
+    const m = newMask('radial', 0);
+    m.radial = { cx: 0.05, cy: 0.5, rx: 0.1, ry: 0.1, angle: 0, feather: 50 };
+    const b = maskBounds(m, info)!;
+    expect(b.minX).toBe(0);
+    close(b.maxX, 0.15);
+    const off = newMask('shape', 0);
+    off.shape = { points: [[1.2, 0.2], [1.5, 0.2], [1.4, 0.5]], feather: 0 };
+    expect(maskBounds(off, info)).toBeNull();
   });
 });

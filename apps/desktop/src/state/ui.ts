@@ -5,11 +5,12 @@ export type Module = 'library' | 'develop';
 const AI_OPEN_KEY = 'darkroom.ai.open';
 const AI_TAB_KEY = 'darkroom.ai.tab';
 
-export type AiTab = 'chat' | 'guided';
+export type AiTab = 'chat' | 'guided' | 'generate';
 
 function loadAiTab(): AiTab {
   try {
-    return localStorage.getItem(AI_TAB_KEY) === 'guided' ? 'guided' : 'chat';
+    const t = localStorage.getItem(AI_TAB_KEY);
+    return t === 'guided' || t === 'generate' ? t : 'chat';
   } catch {
     return 'chat';
   }

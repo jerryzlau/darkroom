@@ -264,6 +264,7 @@ export function createMockBackend(): Backend {
   };
 
   const editThumbs = new Map<number, string>();
+  const patches = new Map<string, Uint8Array>();
   const find = (id: number) => {
     const p = photos.find((x) => x.row.id === id);
     if (!p) throw new Error(`image ${id} not found`);
@@ -487,6 +488,18 @@ export function createMockBackend(): Backend {
     resetEditThumb: async (imageId) => {
       editThumbs.delete(imageId);
       find(imageId).row.thumbRev = 0;
+    },
+    savePatch: async (png) => {
+      const copy = new Uint8Array(png);
+      const digest = await crypto.subtle.digest('SHA-256', copy);
+      const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+      patches.set(hash, copy);
+      return hash;
+    },
+    getPatch: async (hash) => {
+      const p = patches.get(hash);
+      if (!p) throw new Error(`not found: patch ${hash}`);
+      return p.slice().buffer;
     },
     exportBegin: async () => nextId++,
     exportTile: async () => {},

@@ -9,6 +9,7 @@ import { parsePreview, parseRegion, type LoadedSource } from '../engine/source';
 import { backend } from '../ipc/backend';
 import type { ExportSpec, ImageRow } from '../ipc/types';
 import { useLibrary } from '../state/library';
+import { ensurePatchAssets } from './patchAssets';
 
 let bg: Engine | null = null;
 const sources = new Map<number, LoadedSource>();
@@ -50,10 +51,11 @@ async function prepare(imageId: number): Promise<{ row: ImageRow; src: LoadedSou
   const e = engine();
   if (e.source !== src) e.setSource(src);
   e.setParams(params, base);
+  await ensurePatchAssets(params, e);
   return { row: d.image, src, params, base };
 }
 
-export async function toJpeg(px: Uint8Array, w: number, h: number, quality = 0.85): Promise<Uint8Array> {
+async function encodePixels(px: Uint8Array, w: number, h: number, type: string, quality?: number): Promise<Uint8Array> {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -61,9 +63,17 @@ export async function toJpeg(px: Uint8Array, w: number, h: number, quality = 0.8
   const img = ctx.createImageData(w, h);
   img.data.set(px);
   ctx.putImageData(img, 0, 0);
-  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', quality));
-  if (!blob) throw new Error('JPEG encode failed');
+  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, type, quality));
+  if (!blob) throw new Error(`${type} encode failed`);
   return new Uint8Array(await blob.arrayBuffer());
+}
+
+export function toJpeg(px: Uint8Array, w: number, h: number, quality = 0.85): Promise<Uint8Array> {
+  return encodePixels(px, w, h, 'image/jpeg', quality);
+}
+
+export function toPng(px: Uint8Array, w: number, h: number): Promise<Uint8Array> {
+  return encodePixels(px, w, h, 'image/png');
 }
 
 export async function refreshThumbnails(ids: number[]) {

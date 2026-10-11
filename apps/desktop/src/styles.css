@@ -435,6 +435,22 @@ aside.hidden { visibility: hidden; }
 .guided-done { display: flex; flex-direction: column; gap: 6px; }
 .guided-picks { margin: 0; padding-left: 16px; color: var(--text-dim); line-height: 1.5; }
 .guided-picks b { color: var(--text); font-weight: 600; }
+
+/* Generative Fill (Generate tab) */
+.gen-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.gen-prompt { font-size: 12px; color: var(--text); line-height: 1.4; }
+.gen-meta { font-size: 10.5px; color: var(--text-faint); }
+.gen-list { display: flex; flex-direction: column; gap: 4px; }
+.gen-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+.gen-item .gen-prompt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-item button { padding: 0 6px; font-size: 11px; line-height: 18px; }
+.gen-foot { flex-direction: column; align-items: stretch; gap: 6px; }
+.gen-foot textarea { flex: 0 0 auto; }
+.gen-foot .hint { margin: 0; }
+.ai-messages.generate .ai-scope { border-top: none; padding: 0; }
+.gen-row { display: flex; align-items: center; gap: 6px; }
+.gen-row select { flex: 1; min-width: 0; }
+.gen-price { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
 .preset-desc { resize: vertical; background: #18181b; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; outline: none; line-height: 1.4; user-select: text; -webkit-user-select: text; }
 .preset-desc:focus { border-color: var(--accent-dim); }
 

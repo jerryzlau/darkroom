@@ -6,8 +6,10 @@ import { useUi } from '../../state/ui';
 import { useDialogs } from '../dialogs/dialogState';
 import { GuidedPanel } from './GuidedPanel';
 import { useGuided } from '../../state/guided';
+import { useGenerate } from '../../state/generate';
+import { GeneratePanel } from './GeneratePanel';
 
-/** Collapsible AI Edit dock (chat / guided), pinned to the bottom of the Develop right column. */
+/** Collapsible AI Edit dock (chat / guided / generate), pinned to the bottom of the Develop right column. */
 export function AiDock() {
   const open = useUi((s) => s.aiOpen);
   const toggleAi = useUi((s) => s.toggleAi);
@@ -17,16 +19,21 @@ export function AiDock() {
   const hasKey = useAiChat((s) => s.hasKey);
   const hasRows = useAiChat((s) => s.display.length > 0);
   const guidedPhase = useGuided((s) => s.phase);
+  const genPhase = useGenerate((s) => s.phase);
 
   useEffect(() => {
     void useAiChat.getState().refreshKey();
+    void useGenerate.getState().refreshKey();
     return useDialogs.subscribe((s, prev) => {
-      if (prev.name === 'settings' && s.name !== 'settings') void useAiChat.getState().refreshKey();
+      if (prev.name === 'settings' && s.name !== 'settings') {
+        void useAiChat.getState().refreshKey();
+        void useGenerate.getState().refreshKey();
+      }
     });
   }, []);
 
   const streaming = status === 'streaming';
-  const busy = streaming || guidedPhase === 'analyzing';
+  const busy = streaming || guidedPhase === 'analyzing' || genPhase !== 'idle';
   return (
     <section className={`ai-dock ${open ? 'open' : ''}`}>
       <header className="ai-head" onClick={() => toggleAi()} title="AI Edit (⌘J)">
@@ -40,6 +47,9 @@ export function AiDock() {
             </button>
             <button className={tab === 'guided' ? 'active' : ''} onClick={() => setAiTab('guided')}>
               Guided
+            </button>
+            <button className={tab === 'generate' ? 'active' : ''} onClick={() => setAiTab('generate')}>
+              Generate
             </button>
           </span>
         )}
@@ -71,7 +81,7 @@ export function AiDock() {
           </button>
         )}
       </header>
-      {open && (hasKey === false ? <NoKey /> : hasKey ? tab === 'guided' ? <GuidedPanel /> : <Chat /> : null)}
+      {open && (tab === 'generate' ? <GeneratePanel /> : hasKey === false ? <NoKey /> : hasKey ? tab === 'guided' ? <GuidedPanel /> : <Chat /> : null)}
     </section>
   );
 }

@@ -1,7 +1,7 @@
 /**
  * GLSL ES 3.00 shaders for the develop pipeline.
  *
- *   src (camera linear) --input--> lin (linear ProPhoto, scene-referred)
+ *   src (camera linear) --input--> --spot--> --patch×n--> lin (linear ProPhoto, scene-referred)
  *   lin --nr--> den (optional noise reduction)
  *   den --luma+blur--> small (log luma, small radius; texture)
  *   preview lin --down+blur--> ctxMid / ctxLarge (log luma, dark channel; global context)
@@ -135,6 +135,72 @@ void main() {
 }`;
 
 /** Edge-aware luminance and chroma noise reduction. */
+/**
+ * Generative fill: composite one sRGB-encoded patch (covering uRect) onto the
+ * previous scene-linear stage, weighted by a mask layer (or a soft box over
+ * uArea when the mask is gone) times opacity. Inverse of NEUTRAL_FRAG's
+ * encoding: sRGB decode -> ProPhoto -> undo the exposure offset.
+ */
+export const PATCH_FRAG = HEADER + /* glsl */ `
+uniform sampler2D uIn;          // previous stage, region texels
+uniform sampler2D uPatch;       // RGBA8 sRGB-encoded, top-down, covers uRect
+uniform sampler2DArray uMasks;
+uniform vec4 uRegion;           // pipe region in source UV
+uniform vec4 uRect;             // patch rect in source UV
+uniform vec4 uArea;             // fallback area in source UV
+uniform vec2 uAspect;           // (w/long, h/long)
+uniform float uFeather;         // fallback edge softness, fraction of long edge
+uniform int uLayer;             // mask layer, or -1 for the area fallback
+uniform bool uInvert;
+uniform float uOpacity;
+uniform float uEv;
+uniform mat3 uSrgbToPro;
+void main() {
+  vec2 suv = uRegion.xy + vUv * uRegion.zw;
+  vec3 c = texture(uIn, vUv).rgb;
+  vec2 t = (suv - uRect.xy) / uRect.zw;
+  if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) { outColor = vec4(c, 1.0); return; }
+  float w;
+  if (uLayer >= 0) {
+    w = texture(uMasks, vec3(suv, float(uLayer))).r;
+    if (uInvert) w = 1.0 - w;
+  } else {
+    vec2 lo = (uArea.xy - suv) * uAspect;
+    vec2 hi = (suv - (uArea.xy + uArea.zw)) * uAspect;
+    float d = max(max(lo.x, hi.x), max(lo.y, hi.y));   // > 0 outside the area, in long-edge units
+    w = 1.0 - smoothstep(0.0, max(uFeather, 1e-4), d);
+  }
+  w *= uOpacity;
+  vec3 p = max(uSrgbToPro * srgbDec(texture(uPatch, t).rgb), vec3(0.0)) * exp2(-uEv);
+  outColor = vec4(mix(c, p, w), 1.0);
+}`;
+
+/**
+ * Render a source-UV rect of the pre-develop image (lin) to display sRGB, the
+ * "neutral render" a generative model sees. Optionally tints a mask red.
+ */
+export const NEUTRAL_FRAG = HEADER + /* glsl */ `
+uniform sampler2D uLin;
+uniform sampler2DArray uMasks;
+uniform vec4 uRegion;
+uniform vec4 uRect;
+uniform float uEv;
+uniform mat3 uProToSrgb;
+uniform int uOverlayMask;
+uniform bool uOverlayInvert;
+void main() {
+  vec2 suv = uRect.xy + vUv * uRect.zw;
+  vec2 t = (suv - uRegion.xy) / uRegion.zw;
+  vec3 lin = texture(uLin, t).rgb * exp2(uEv);
+  vec3 o = srgbEnc(clamp(uProToSrgb * lin, 0.0, 1.0));
+  if (uOverlayMask >= 0) {
+    float w = texture(uMasks, vec3(suv, float(uOverlayMask))).r;
+    if (uOverlayInvert) w = 1.0 - w;
+    o = mix(o, vec3(1.0, 0.0, 0.0), w * 0.6);
+  }
+  outColor = vec4(o, 1.0);
+}`;
+
 export const NR_FRAG = HEADER + /* glsl */ `
 uniform sampler2D uIn;
 uniform vec2 uTexel;

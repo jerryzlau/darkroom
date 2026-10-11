@@ -3,7 +3,7 @@
  * marquees). Coordinates are plain [x, y] pairs; callers decide the space
  * (CSS pixels while dragging, source UV once stored in a mask).
  */
-import type { LocalAdjustments, Pt } from './params';
+import type { LocalAdjustments, Mask, Pt } from './params';
 
 /** Axis-aligned rectangle with corners a and b, as a clockwise 4-point polygon. */
 export function rectPolygon(a: Pt, b: Pt): Pt[] {
@@ -107,4 +107,48 @@ export function polygonCenter(points: Pt[]): Pt {
 /** True when every local adjustment is zero (the mask has no visible effect yet). */
 export function isAllZero(adj: LocalAdjustments): boolean {
   return Object.values(adj).every((v) => v === 0);
+}
+
+/**
+ * Source-UV bounds of the area a mask can affect, clamped to [0,1]. Null for
+ * linear gradients (unbounded), empty masks, or a box that clamps to nothing.
+ */
+export function maskBounds(m: Mask, info: { width: number; height: number }): Bounds | null {
+  const long = Math.max(info.width, info.height);
+  const sx = long / info.width;
+  const sy = long / info.height;
+  let b: Bounds | null = null;
+  if (m.kind === 'shape') {
+    if (m.shape.points.length < 3) return null;
+    const pb = polygonBounds(m.shape.points);
+    const fx = m.shape.feather * sx;
+    const fy = m.shape.feather * sy;
+    b = { minX: pb.minX - fx, minY: pb.minY - fy, maxX: pb.maxX + fx, maxY: pb.maxY + fy };
+  } else if (m.kind === 'brush') {
+    for (const st of m.brush.strokes) {
+      if (st.erase || !st.points.length) continue;
+      const pb = polygonBounds(st.points);
+      const px = st.size * sx;
+      const py = st.size * sy;
+      const sb = { minX: pb.minX - px, minY: pb.minY - py, maxX: pb.maxX + px, maxY: pb.maxY + py };
+      b = b
+        ? { minX: Math.min(b.minX, sb.minX), minY: Math.min(b.minY, sb.minY), maxX: Math.max(b.maxX, sb.maxX), maxY: Math.max(b.maxY, sb.maxY) }
+        : sb;
+    }
+    if (!b) return null;
+  } else if (m.kind === 'radial') {
+    const { cx, cy, rx, ry, angle } = m.radial;
+    const a = (angle * Math.PI) / 180;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const hx = Math.sqrt((rx * c) ** 2 + (ry * s) ** 2) * sx;
+    const hy = Math.sqrt((rx * s) ** 2 + (ry * c) ** 2) * sy;
+    b = { minX: cx - hx, minY: cy - hy, maxX: cx + hx, maxY: cy + hy };
+  } else {
+    return null;
+  }
+  const cl = (v: number) => Math.min(1, Math.max(0, v));
+  const out = { minX: cl(b.minX), minY: cl(b.minY), maxX: cl(b.maxX), maxY: cl(b.maxY) };
+  if (!(out.maxX > out.minX) || !(out.maxY > out.minY)) return null;
+  return out;
 }

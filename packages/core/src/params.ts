@@ -8,7 +8,7 @@
  * exposure is in stops, temperature in Kelvin.
  */
 
-export const PARAMS_VERSION = 2;
+export const PARAMS_VERSION = 3;
 
 export type Pt = [number, number];
 
@@ -68,6 +68,28 @@ export interface Spot {
 }
 
 export const MAX_SPOTS = 32;
+
+/** A generative fill: an sRGB PNG from the patch store composited over `rect` through a mask (or a soft box over `area`). */
+export interface Patch {
+  id: string;
+  /** sha256 hex of the PNG in the patch store */
+  asset: string;
+  /** region the PNG covers, source UV [x, y, w, h] */
+  rect: [number, number, number, number];
+  /** bounds of the selection at generation time, source UV; alpha fallback when the mask is gone */
+  area: [number, number, number, number];
+  maskId: string | null;
+  /** edge softness of the `area` fallback, fraction of the long edge, 0..0.5 */
+  feather: number;
+  opacity: number; // 0..1
+  enabled: boolean;
+  prompt: string;
+  model: string;
+  /** exposure offset in stops baked into the render the model saw */
+  ev: number;
+}
+
+export const MAX_PATCHES = 16;
 
 export interface LocalAdjustments {
   exposure: number; // stops, -4..4
@@ -186,6 +208,7 @@ export interface EditParams {
   geometry: Geometry;
   masks: Mask[];
   spots: Spot[];
+  patches: Patch[];
 }
 
 export const IDENTITY_CURVE: Pt[] = [
@@ -262,6 +285,7 @@ export function defaultParams(src?: Partial<SourceKind>): EditParams {
     geometry: defaultGeometry(),
     masks: [],
     spots: [],
+    patches: [],
   };
 }
 
@@ -294,6 +318,11 @@ let maskCounter = 0;
 export function newMaskId(): string {
   maskCounter += 1;
   return `m${Date.now().toString(36)}${maskCounter.toString(36)}`;
+}
+
+export function newPatchId(): string {
+  maskCounter += 1;
+  return `p${Date.now().toString(36)}${maskCounter.toString(36)}`;
 }
 
 const MASK_KIND_NAMES: Record<MaskKind, string> = {
@@ -463,6 +492,11 @@ export function migrateParams(input: unknown): unknown {
     }
     o.version = 2;
   }
+  if (version < 3) {
+    // v3 added generative fill patches.
+    if (!Array.isArray(o.patches)) o.patches = [];
+    o.version = 3;
+  }
   return o;
 }
 
@@ -577,6 +611,39 @@ export function normalizeParams(input: unknown, base: EditParams = defaultParams
     },
     masks,
     spots: Array.isArray(o.spots) ? (o.spots as unknown[]).map(spotN).filter((x): x is Spot => x !== null).slice(0, MAX_SPOTS) : [],
+    patches: Array.isArray(o.patches)
+      ? (o.patches as unknown[]).map(patchN).filter((x): x is Patch => x !== null).slice(0, MAX_PATCHES)
+      : [],
+  };
+}
+
+type Rect4 = [number, number, number, number];
+
+function rectN(v: unknown): Rect4 | null {
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  if (!v.every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
+  const [x, y, w, h] = v as number[];
+  if (!(w > 0) || !(h > 0)) return null;
+  return [num(x, 0, 0, 1), num(y, 0, 0, 1), num(w, 1, 1e-6, 1), num(h, 1, 1e-6, 1)];
+}
+
+export function patchN(v: unknown): Patch | null {
+  const o = obj(v);
+  if (typeof o.asset !== 'string' || !/^[0-9a-f]{64}$/.test(o.asset)) return null;
+  const rect = rectN(o.rect);
+  if (!rect) return null;
+  return {
+    id: typeof o.id === 'string' ? o.id : newMaskId(),
+    asset: o.asset,
+    rect,
+    area: rectN(o.area) ?? [...rect],
+    maskId: typeof o.maskId === 'string' ? o.maskId : null,
+    feather: num(o.feather, 0.02, 0, 0.5),
+    opacity: num(o.opacity, 1, 0, 1),
+    enabled: bool(o.enabled, true),
+    prompt: typeof o.prompt === 'string' ? o.prompt : '',
+    model: typeof o.model === 'string' ? o.model : '',
+    ev: num(o.ev, 0, -4, 4),
   };
 }
 
@@ -614,6 +681,7 @@ export const SECTIONS = {
   crop: ['geometry'],
   spots: ['spots'],
   masks: ['masks'],
+  patches: ['patches'],
 } as const satisfies Record<string, readonly (keyof EditParams)[]>;
 
 export type SectionName = keyof typeof SECTIONS;
@@ -632,6 +700,7 @@ export const SECTION_LABELS: Record<SectionName, string> = {
   crop: 'Crop & Rotation',
   spots: 'Spot Removal',
   masks: 'Masks',
+  patches: 'Generative Fill',
 };
 
 /** A preset or copied settings: a subset of top-level fields. */

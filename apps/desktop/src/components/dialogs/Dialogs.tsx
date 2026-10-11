@@ -4,6 +4,8 @@ import { defaultExportSettings, exportImages, fileName, type ExportProgress, typ
 import { backend } from '../../ipc/backend';
 import { DEFAULT_MODEL, SETTING_KEY, SETTING_MODEL } from '../../lib/ai';
 import { useAiChat } from '../../state/aiChat';
+import { DEFAULT_GEMINI_MODEL, GEMINI_KEY, GEMINI_MODEL, GEMINI_MODELS } from '../../lib/gemini';
+import { useGenerate } from '../../state/generate';
 import type { AppInfo, Collection, SmartRules } from '../../ipc/types';
 import { useDevelop } from '../../state/develop';
 import { useLibrary } from '../../state/library';
@@ -41,7 +43,7 @@ export function DialogHost() {
 // ---------------------------------------------------------------------------
 
 const ALL_SECTIONS = Object.keys(SECTIONS) as SectionName[];
-const DEFAULT_COPY: SectionName[] = ALL_SECTIONS.filter((s) => s !== 'crop' && s !== 'masks');
+const DEFAULT_COPY: SectionName[] = ALL_SECTIONS.filter((s) => s !== 'crop' && s !== 'masks' && s !== 'patches');
 
 export function SectionPicker({ value, onChange }: { value: SectionName[]; onChange: (v: SectionName[]) => void }) {
   return (
@@ -424,13 +426,27 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [autoXmp, setAutoXmp] = useState(false);
   const [aiKey, setAiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
+  const [genKey, setGenKey] = useState('');
+  const [genModel, setGenModel] = useState('');
   useEffect(() => {
     void backend().appInfo().then(setInfo);
     void backend().getSetting('autoWriteXmp').then((v) => setAutoXmp(v === 'true'));
-    void Promise.all([backend().getSetting(SETTING_KEY), backend().getSetting(SETTING_MODEL)]).then(([k, m]) => {
-      savedAi.current = { [SETTING_KEY]: (k ?? '').trim(), [SETTING_MODEL]: (m ?? '').trim() };
+    void Promise.all([
+      backend().getSetting(SETTING_KEY),
+      backend().getSetting(SETTING_MODEL),
+      backend().getSetting(GEMINI_KEY),
+      backend().getSetting(GEMINI_MODEL),
+    ]).then(([k, m, gk, gm]) => {
+      savedAi.current = {
+        [SETTING_KEY]: (k ?? '').trim(),
+        [SETTING_MODEL]: (m ?? '').trim(),
+        [GEMINI_KEY]: (gk ?? '').trim(),
+        [GEMINI_MODEL]: (gm ?? '').trim(),
+      };
       setAiKey(k ?? '');
       setAiModel(m ?? '');
+      setGenKey(gk ?? '');
+      setGenModel(gm ?? '');
       latestAi.current.loaded = true;
     });
   }, []);
@@ -443,18 +459,23 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     try {
       await backend().setSetting(key, v);
       await useAiChat.getState().refreshKey();
+      await useGenerate.getState().refreshKey();
     } catch (e) {
       toast(`Could not save setting: ${e}`, 'error');
     }
   };
-  const latestAi = useRef({ key: aiKey, model: aiModel, loaded: false });
+  const latestAi = useRef({ key: aiKey, model: aiModel, genKey, genModel, loaded: false });
   latestAi.current.key = aiKey;
   latestAi.current.model = aiModel;
+  latestAi.current.genKey = genKey;
+  latestAi.current.genModel = genModel;
   useEffect(
     () => () => {
       if (!latestAi.current.loaded) return;
       void saveAi(SETTING_KEY, latestAi.current.key);
       void saveAi(SETTING_MODEL, latestAi.current.model);
+      void saveAi(GEMINI_KEY, latestAi.current.genKey);
+      void saveAi(GEMINI_MODEL, latestAi.current.genModel);
     },
     [],
   );
@@ -499,6 +520,39 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
           onKeyDown={(e) => e.stopPropagation()}
         />
       </Field>
+      <h4 className="settings-h">Generative Fill</h4>
+      <Field
+        label="Google AI API key"
+        hint="Stored unencrypted in the local catalog database. Sent only to generativelanguage.googleapis.com when you click Generate. Image output needs a paid Gemini API key; roughly $0.03–0.25 per image depending on model and size."
+      >
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="AIza…"
+          value={genKey}
+          onChange={(e) => setGenKey(e.target.value)}
+          onBlur={() => void saveAi(GEMINI_KEY, genKey)}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+      </Field>
+      <Field label="Image model">
+        <select
+          value={genModel || DEFAULT_GEMINI_MODEL}
+          onChange={(e) => {
+            setGenModel(e.target.value);
+            void saveAi(GEMINI_MODEL, e.target.value);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {genModel && !GEMINI_MODELS.some((m) => m.id === genModel) && <option value={genModel}>{genModel}</option>}
+          {GEMINI_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </Field>
       {info && (
         <dl className="meta-list">
           <div>
@@ -537,7 +591,7 @@ const SHORTCUTS: [string, string][] = [
   ['⇧⌘C / ⇧⌘V', 'Copy / paste settings'],
   ['⇧⌘R', 'Reset all settings'],
   ['⌘N', 'New snapshot'],
-  ['⌘J', 'AI Edit (chat / guided)'],
+  ['⌘J', 'AI Edit (chat / guided / generate)'],
   ['\\', 'Before / after'],
   ['J', 'Show clipping'],
   ['R', 'Crop tool'],

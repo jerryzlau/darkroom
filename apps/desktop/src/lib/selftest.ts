@@ -10,7 +10,9 @@ import { useDevelop } from '../state/develop';
 import { getEngine } from '../state/engineHub';
 import { useLibrary } from '../state/library';
 import { useUi } from '../state/ui';
+import { newMask } from '@darkroom/core';
 import { defaultExportSettings, exportImages } from './background';
+import { patchAssetState } from './patchAssets';
 
 interface Config {
   enabled: boolean;
@@ -144,6 +146,48 @@ export async function maybeRunSelftest() {
     await sleep(1500);
     const row = useLibrary.getState().images.find((i) => i.id === raw.id);
     log(`edited=${row?.edited} thumbRev=${row?.thumbRev} history=${useDevelop.getState().history.length}`);
+
+    // 3b. generative fill: a stored PNG composited through a shape mask (no network)
+    {
+      const img = images.find((i) => i.id !== raw.id && i.format !== 'raw') ?? images.find((i) => i.id !== raw.id);
+      if (!img) return fail('no second image for the fill test');
+      useLibrary.getState().select(img.id);
+      await until(() => useDevelop.getState().imageId === img.id && !!useDevelop.getState().source, 60000, 'open fill image');
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 64;
+      const cx = c.getContext('2d');
+      if (!cx) return fail('no 2d canvas');
+      cx.fillStyle = 'rgb(255,0,255)';
+      cx.fillRect(0, 0, 64, 64);
+      const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/png'));
+      if (!blob) return fail('canvas toBlob failed');
+      const hash = await b.savePatch(new Uint8Array(await blob.arrayBuffer()));
+      useDevelop.getState().setAndCommit((p) => {
+        const m = newMask('shape', p.masks.length);
+        m.id = 'fillmask';
+        m.shape = { points: [[0.35, 0.35], [0.65, 0.35], [0.65, 0.65], [0.35, 0.65]], feather: 0.01 };
+        p.masks.push(m);
+        p.patches.push({ id: 'fill1', asset: hash, rect: [0.3, 0.3, 0.4, 0.4], area: [0.35, 0.35, 0.3, 0.3], maskId: 'fillmask', feather: 0.01, opacity: 1, enabled: true, prompt: 'selftest', model: 'none', ev: 0 });
+      }, 'Selftest fill');
+      await until(() => patchAssetState(hash) === 'ready', 10000, 'patch asset');
+      await sleep(500);
+      const e = getEngine();
+      if (!e) return fail('no engine');
+      const ds = useDevelop.getState();
+      e.sync(ds.source!, ds.params, ds.base);
+      const px = e.renderSmall(200, 200);
+      if (!px) return fail('fill renderSmall returned null');
+      const o = (100 * 200 + 100) * 4;
+      const [r, g, bl] = [px[o], px[o + 1], px[o + 2]];
+      log(`fill centre pixel ${r},${g},${bl} (asset ${hash})`);
+      if (!(r > 150 && g < 110 && bl > 150)) return fail(`fill not composited: centre ${r},${g},${bl}`);
+      const sf = { ...defaultExportSettings(), folder: cfg.outDir, template: '{name}-fill', overwrite: true };
+      const rf = await exportImages([img.id], sf, () => {}, () => false);
+      log(`fill export ${JSON.stringify(rf)}`);
+      if (rf.errors.length) return fail('fill export errors');
+      log('generative fill ok');
+    }
 
     // 4. export
     const s1 = { ...defaultExportSettings(), folder: cfg.outDir, template: '{name}-edited', overwrite: true };

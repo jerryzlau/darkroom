@@ -7,6 +7,7 @@ pub mod icc;
 pub mod import;
 pub mod logger;
 pub mod metadata;
+pub mod patches;
 pub mod samples;
 pub mod source;
 pub mod state;
@@ -120,6 +121,8 @@ pub fn run() {
             commands::get_region,
             commands::save_edit_thumb,
             commands::reset_edit_thumb,
+            commands::save_patch,
+            commands::get_patch,
             commands::export_begin,
             commands::export_tile,
             commands::export_finish,

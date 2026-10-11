@@ -4,17 +4,34 @@ import {
   CURVE_LUT_SIZE,
   frameDims,
   hsvToRgb,
+  MAX_PATCHES,
+  PRO_TO_SRGB,
   proToOutput,
   rotatedBounds,
+  SRGB_TO_PRO,
   wbMultipliers,
   type EditParams,
+  type Patch,
   type Geometry,
   type OutputSpace,
   type SourceColor,
 } from '@darkroom/core';
 import { createTexture, ensureTarget, Program, type Target } from './gl';
 import { maskGeometryKey, rasterizeMask } from './masks';
-import { BLUR_FRAG, FINAL_FRAG, INPUT_FRAG, LUMA_FRAG, MAIN_FRAG, MAX_MASKS, MAX_SPOTS, NR_FRAG, SPOT_FRAG, VERT } from './shaders';
+import {
+  BLUR_FRAG,
+  FINAL_FRAG,
+  INPUT_FRAG,
+  LUMA_FRAG,
+  MAIN_FRAG,
+  MAX_MASKS,
+  MAX_SPOTS,
+  NEUTRAL_FRAG,
+  NR_FRAG,
+  PATCH_FRAG,
+  SPOT_FRAG,
+  VERT,
+} from './shaders';
 import type { LoadedSource } from './source';
 
 export interface ViewState {
@@ -121,6 +138,17 @@ class RegionPipe {
 }
 
 const MASK_LONG = 2048;
+/** Uploaded patch textures kept per engine (unreferenced ones beyond this are evicted). */
+const MAX_PATCH_TEX = 24;
+
+/** A patch ready to composite: its texture and the mask layer that gates it. */
+interface ResolvedPatch {
+  patch: Patch;
+  tex: WebGLTexture;
+  /** mask layer, or -1 for the soft-box fallback over `patch.area` */
+  layer: number;
+  invert: boolean;
+}
 
 export class Engine {
   readonly gl: WebGL2RenderingContext;
@@ -132,6 +160,8 @@ export class Engine {
   private pMain: Program;
   private pFinal: Program;
   private pSpot: Program;
+  private pPatch: Program;
+  private pNeutral: Program;
 
   source: LoadedSource | null = null;
   private preview: RegionPipe;
@@ -160,6 +190,10 @@ export class Engine {
 
   private histTarget: Target | null = null;
   private outTarget: Target | null = null;
+  private neutralTarget: Target | null = null;
+
+  /** Generative-fill PNGs by sha256, uploaded as RGBA8 (sRGB-encoded, top-down). Insertion-ordered. */
+  private patchTex = new Map<string, WebGLTexture>();
 
   params: EditParams | null = null;
   beforeParams: EditParams | null = null;
@@ -192,6 +226,8 @@ export class Engine {
     this.pMain = new Program(gl, VERT, MAIN_FRAG, 'main');
     this.pFinal = new Program(gl, VERT, FINAL_FRAG, 'final');
     this.pSpot = new Program(gl, VERT, SPOT_FRAG, 'spot');
+    this.pPatch = new Program(gl, VERT, PATCH_FRAG, 'patch');
+    this.pNeutral = new Program(gl, VERT, NEUTRAL_FRAG, 'neutral');
 
     this.maskTex = gl.createTexture()!;
     this.allocMasks(1, 1);
@@ -274,6 +310,43 @@ export class Engine {
     return this.detail ? this.detail.region : null;
   }
 
+  /** Upload (or replace) the decoded PNG for a patch asset. */
+  setPatchAsset(hash: string, img: ImageBitmap | ImageData | HTMLCanvasElement): void {
+    const gl = this.gl;
+    const old = this.patchTex.get(hash);
+    if (old) {
+      gl.deleteTexture(old);
+      this.patchTex.delete(hash);
+    }
+    const tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.patchTex.set(hash, tex);
+    if (this.patchTex.size > MAX_PATCH_TEX) {
+      const used = new Set((this.params?.patches ?? []).map((q) => q.asset));
+      used.add(hash);
+      for (const [h, t] of this.patchTex) {
+        if (this.patchTex.size <= MAX_PATCH_TEX) break;
+        if (used.has(h)) continue;
+        gl.deleteTexture(t);
+        this.patchTex.delete(h);
+      }
+    }
+  }
+
+  hasPatchAsset(hash: string): boolean {
+    return this.patchTex.has(hash);
+  }
+
   private allocMasks(w: number, h: number) {
     const gl = this.gl;
     this.maskW = w;
@@ -295,8 +368,32 @@ export class Engine {
     return this.source!.color;
   }
 
-  private inputKey(p: EditParams) {
-    return JSON.stringify([p.wb.mode, p.wb.temp, p.wb.tint, p.lens.vignette, p.spots]);
+  /** Patches that will actually be composited, in order (enabled, visible, with an uploaded texture). */
+  private resolvePatches(p: EditParams): ResolvedPatch[] {
+    const out: ResolvedPatch[] = [];
+    for (const patch of p.patches.slice(0, MAX_PATCHES)) {
+      if (!patch.enabled || !(patch.opacity > 0)) continue;
+      const tex = this.patchTex.get(patch.asset);
+      if (!tex) continue;
+      // the mask's `enabled` flag is ignored on purpose: it gates the mask's adjustments, not the fill
+      const mi = patch.maskId ? p.masks.findIndex((m) => m.id === patch.maskId) : -1;
+      const layer = mi >= 0 && mi < MAX_MASKS ? mi : -1;
+      out.push({ patch, tex, layer, invert: layer >= 0 ? p.masks[mi].invert : false });
+    }
+    return out;
+  }
+
+  private inputKey(p: EditParams, resolved: ResolvedPatch[], masksKey: string) {
+    const anyLayer = resolved.some((r) => r.layer >= 0);
+    return JSON.stringify([
+      p.wb.mode,
+      p.wb.temp,
+      p.wb.tint,
+      p.lens.vignette,
+      p.spots,
+      resolved.map((r) => [r.patch.asset, r.patch.rect, r.patch.area, r.layer, r.invert, r.patch.feather, r.patch.opacity, r.patch.ev]),
+      anyLayer ? masksKey : '',
+    ]);
   }
 
   private updateMasks(p: EditParams): string {
@@ -369,11 +466,30 @@ export class Engine {
     return pipe.w / (pipe.region[2] * this.source!.info.width);
   }
 
-  private runInput(pipe: RegionPipe, p: EditParams) {
+  /**
+   * INPUT (WB, camera -> ProPhoto, lens vignetting), then SPOT when there are
+   * spots, then one PATCH per resolved patch, ping-ponging between linRaw and
+   * lin so the last stage lands in `pipe.lin`. Needs `updateMasks` first.
+   */
+  private runInput(pipe: RegionPipe, p: EditParams, masksKey: string) {
     const gl = this.gl;
-    const key = this.inputKey(p);
+    const resolved = this.resolvePatches(p);
+    const key = this.inputKey(p, resolved, masksKey);
     if (pipe.keys.input === key && pipe.lin) return false;
+    const spots = p.spots.slice(0, MAX_SPOTS);
+    const n = 1 + (spots.length > 0 ? 1 : 0) + resolved.length;
     pipe.lin = ensureTarget(gl, pipe.lin, pipe.w, pipe.h, pipe.fmt);
+    if (n >= 2) pipe.linRaw = ensureTarget(gl, pipe.linRaw, pipe.w, pipe.h, pipe.fmt);
+    const lin = pipe.lin;
+    const raw = pipe.linRaw;
+    // with an odd stage count the first stage writes lin, so the last one does too
+    let dst: Target = n % 2 === 1 ? lin : raw!;
+    let prev: Target = dst;
+    const advance = () => {
+      prev = dst;
+      dst = dst === lin ? raw! : lin;
+    };
+
     const c = this.color();
     const mul = wbMultipliers(c, p.wb);
     const clip = c.isRaw ? Math.min(mul[0], mul[1], mul[2]) : 1e9;
@@ -388,19 +504,19 @@ export class Engine {
     pr.f('uRegion', ...pipe.region);
     pr.f('uAspect', info.width / long, info.height / long);
     pr.f('uLensVig', p.lens.vignette / 100);
-    const spots = p.spots.slice(0, MAX_SPOTS);
-    if (spots.length === 0) {
-      this.draw(pipe.lin, pipe.w, pipe.h);
-    } else {
-      pipe.linRaw = ensureTarget(gl, pipe.linRaw, pipe.w, pipe.h, pipe.fmt);
-      this.draw(pipe.linRaw, pipe.w, pipe.h);
+    this.draw(dst, pipe.w, pipe.h);
+    advance();
+
+    if (spots.length > 0) {
       const ps = this.pSpot;
       ps.use();
-      ps.tex('uIn', pipe.linRaw.tex);
+      ps.tex('uIn', prev.tex);
       ps.f('uRegion', ...pipe.region);
-      const fallback = pipe !== this.preview && this.preview.lin ? this.preview.lin.tex : pipe.linRaw.tex;
-      ps.tex('uFallback', fallback);
-      ps.b('uHasFallback', pipe !== this.preview && !!this.preview.lin);
+      // Non-preview pipes fall back to the preview's lin for spot sources outside
+      // their region. That texture is post-patch (an accepted limitation).
+      const hasFallback = pipe !== this.preview && !!this.preview.lin;
+      ps.tex('uFallback', hasFallback ? this.preview.lin!.tex : prev.tex);
+      ps.b('uHasFallback', hasFallback);
       ps.f('uAspect', info.width / long, info.height / long);
       ps.i('uCount', spots.length);
       const A = new Float32Array(MAX_SPOTS * 4);
@@ -411,8 +527,30 @@ export class Engine {
       });
       ps.v4('uSpotA', A);
       ps.v4('uSpotB', B);
-      this.draw(pipe.lin, pipe.w, pipe.h);
+      this.draw(dst, pipe.w, pipe.h);
+      advance();
     }
+
+    for (const r of resolved) {
+      const pp = this.pPatch;
+      pp.use();
+      pp.tex('uIn', prev.tex);
+      pp.tex('uPatch', r.tex);
+      pp.tex('uMasks', this.maskTex, gl.TEXTURE_2D_ARRAY);
+      pp.f('uRegion', ...pipe.region);
+      pp.f('uRect', ...r.patch.rect);
+      pp.f('uArea', ...r.patch.area);
+      pp.f('uAspect', info.width / long, info.height / long);
+      pp.f('uFeather', r.patch.feather);
+      pp.i('uLayer', r.layer);
+      pp.b('uInvert', r.invert);
+      pp.f('uOpacity', r.patch.opacity);
+      pp.f('uEv', r.patch.ev);
+      pp.m3('uSrgbToPro', SRGB_TO_PRO);
+      this.draw(dst, pipe.w, pipe.h);
+      advance();
+    }
+
     pipe.keys.input = key;
     pipe.keys.nr = '';
     return true;
@@ -574,13 +712,14 @@ export class Engine {
   /** Bring a region's developed texture up to date. */
   private develop(pipe: RegionPipe, p: EditParams) {
     if (!this.source || !pipe.src) return;
+    // masks first: PATCH stages in runInput sample them
+    const masksKey = this.updateMasks(p);
     // the global context always comes from the preview, whichever region we develop
-    this.runInput(this.preview, p);
+    this.runInput(this.preview, p, masksKey);
     this.runContext(p);
-    if (pipe !== this.preview) this.runInput(pipe, p);
+    if (pipe !== this.preview) this.runInput(pipe, p, masksKey);
     const den = this.runNr(pipe, p);
     const small = this.runSmall(pipe, p, den);
-    const masksKey = this.updateMasks(p);
     const curveKey = this.updateCurve(p);
     const key = pipe.keys.nr + '|' + pipe.keys.small + '|' + this.ctxKey + '|' + this.mainKey(p, masksKey, curveKey);
     if (pipe.keys.main === key && pipe.dev) return;
@@ -787,6 +926,43 @@ export class Engine {
   }
 
   /**
+   * Render a source-UV rect of the pre-develop image (WB, spots, earlier
+   * patches; from the preview) as display sRGB RGBA8 at `w` x `h`, rows
+   * top-down: the "neutral render" a generative model sees. `ev` brightens by
+   * that many stops before the sRGB clamp; `overlayMask` tints a mask layer red.
+   */
+  renderNeutralRect(
+    p: EditParams,
+    rect: [number, number, number, number],
+    w: number,
+    h: number,
+    opts: { ev: number; overlayMask?: number; overlayInvert?: boolean },
+  ): Uint8Array | null {
+    if (!this.source || !this.preview.src) return null;
+    const gl = this.gl;
+    this.params = p;
+    const masksKey = this.updateMasks(p);
+    this.runInput(this.preview, p, masksKey);
+    const t = (this.neutralTarget = ensureTarget(gl, this.neutralTarget, w, h, gl.RGBA8));
+    const pr = this.pNeutral;
+    pr.use();
+    pr.tex('uLin', this.preview.lin!.tex);
+    pr.tex('uMasks', this.maskTex, gl.TEXTURE_2D_ARRAY);
+    pr.f('uRegion', ...this.preview.region);
+    pr.f('uRect', ...rect);
+    pr.f('uEv', opts.ev);
+    pr.m3('uProToSrgb', PRO_TO_SRGB);
+    pr.i('uOverlayMask', opts.overlayMask ?? -1);
+    pr.b('uOverlayInvert', opts.overlayInvert ?? false);
+    this.draw(t, w, h);
+    const out = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+
+  /**
    * Render one export tile. `region` is a full-resolution source region (any
    * scale) covering the tile's footprint. Output rows are top-down; 8-bit
    * returns RGBA8, 16-bit returns RGBA as little-endian u16.
@@ -843,6 +1019,8 @@ export class Engine {
     this.preview.dispose(this.gl);
     this.clearDetail();
     this.tilePipe.dispose(this.gl);
+    for (const t of this.patchTex.values()) this.gl.deleteTexture(t);
+    this.patchTex.clear();
     const ext = this.gl.getExtension('WEBGL_lose_context');
     ext?.loseContext();
   }

@@ -9,6 +9,7 @@ import { computeHistogram } from '../engine/Engine';
 import { useDevelop } from '../state/develop';
 import { getEngine, requestRedraw } from '../state/engineHub';
 import { toJpeg } from './background';
+import { primePatchAssets } from './patchAssets';
 
 /** Output size for a render of `params` with the long edge at `longEdge` (crop and rotation aware). */
 export function thumbSize(params: EditParams, info: { width: number; height: number }, longEdge: number): { w: number; h: number } {
@@ -52,6 +53,7 @@ export function renderParamsPixels(params: EditParams, longEdge: number, opts: R
     const s = useDevelop.getState();
     if (!e || !s.source) return null;
     const { w, h } = thumbSize(params, s.source.info, longEdge);
+    primePatchAssets(params, e, requestRedraw);
     // no await between sync and renderSmall: the engine must not be shared mid-render
     e.sync(s.source, params, s.base);
     let px: Uint8Array | null = null;
@@ -63,6 +65,37 @@ export function renderParamsPixels(params: EditParams, longEdge: number, opts: R
     return px ? { px, w, h } : null;
   });
   // let the on-screen frame repaint between jobs; a failed job must not stall the queue
+  queue = job.then(nextMacrotask, nextMacrotask);
+  return job;
+}
+
+/** Render a source-UV rect of the pre-develop image (WB, spots, fills) as display sRGB RGBA8 via the on-screen engine. Same queue/cancel semantics as renderParamsPixels. */
+export function renderNeutralPixels(
+  params: EditParams,
+  rect: [number, number, number, number],
+  w: number,
+  h: number,
+  o: { ev: number; overlayMask?: number; overlayInvert?: boolean } & RenderOpts,
+): Promise<{ px: Uint8Array; w: number; h: number } | null> {
+  const scope = o.scope ?? 'default';
+  const gen = generations.get(scope) ?? 0;
+  const cancellable = o.cancellable ?? true;
+  const job = queue.then(() => {
+    if (cancellable && gen !== (generations.get(scope) ?? 0)) return null;
+    const e = getEngine();
+    const s = useDevelop.getState();
+    if (!e || !s.source) return null;
+    primePatchAssets(params, e, requestRedraw);
+    // no await between sync and the render: the engine must not be shared mid-render
+    e.sync(s.source, params, s.base);
+    let px: Uint8Array | null = null;
+    try {
+      px = e.renderNeutralRect(params, rect, w, h, { ev: o.ev, overlayMask: o.overlayMask, overlayInvert: o.overlayInvert });
+    } finally {
+      requestRedraw();
+    }
+    return px ? { px, w, h } : null;
+  });
   queue = job.then(nextMacrotask, nextMacrotask);
   return job;
 }

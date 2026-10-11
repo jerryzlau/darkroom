@@ -55,6 +55,8 @@ export async function createTauriBackend(): Promise<Backend> {
     getRegion: (photoId, x, y, w, h, ow, oh) => invoke<ArrayBuffer>('get_region', { photoId, x, y, w, h, ow, oh }),
     saveEditThumb: (imageId, jpeg) => invoke('save_edit_thumb', jpeg, { headers: { 'x-image-id': String(imageId) } }),
     resetEditThumb: (imageId) => invoke('reset_edit_thumb', { imageId }),
+    savePatch: (png) => invoke<string>('save_patch', png),
+    getPatch: (hash) => invoke<ArrayBuffer>('get_patch', { hash }),
     exportBegin: (spec) => invoke('export_begin', { spec }),
     exportTile: (job, x, y, w, h, data) =>
       invoke('export_tile', data, {

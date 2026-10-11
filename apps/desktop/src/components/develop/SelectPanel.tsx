@@ -84,9 +84,17 @@ export function SelectPanel() {
           Show overlay
         </button>
         <button onClick={() => useUi.getState().toggleAi(true)}>Ask AI…</button>
+        <button
+          onClick={() => {
+            useUi.getState().toggleAi(true);
+            useUi.getState().setAiTab('generate');
+          }}
+        >
+          Generate…
+        </button>
       </div>
       <div className="hint">
-        Drag on the photo to select an area (hold ⇧ for a square or circle). Click a selection to make it active, or click outside to deselect. Adjust it in Masks (M) or ask the AI to change just that area. ⌫ deletes the active selection.
+        Drag on the photo to select an area (hold ⇧ for a square or circle). Click a selection to make it active, or click outside to deselect. Adjust it in Masks (M) ask the AI to change just that area, or generate new content in that area. ⌫ deletes the active selection.
       </div>
     </Section>
   );

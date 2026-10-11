@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
     "@darkroom/core": "workspace:*",
+    "@google/genai": "2.28.0",
     "@tauri-apps/api": "^2.12.2",
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "react": "^19.3.0",
