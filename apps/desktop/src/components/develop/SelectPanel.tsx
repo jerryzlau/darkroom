@@ -44,7 +44,7 @@ export function SelectPanel() {
 
   return (
     <Section id="select" title="Selection">
-      <div className="row">
+      <div className="row" data-ctl="shape">
         <span className="row-label">Shape</span>
         <Seg<SelectMode>
           small

@@ -574,6 +574,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
 }
 
 const SHORTCUTS: [string, string][] = [
+  ['⌘K', 'Search tools, panels and actions'],
   ['G', 'Grid'],
   ['E', 'Loupe'],
   ['D', 'Develop'],

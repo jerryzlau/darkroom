@@ -26,7 +26,7 @@ function Wheel({ region, label, size }: { region: Region; label: string; size: n
   const px = 50 + Math.cos(ang) * (w.s / 100) * 50;
   const py = 50 - Math.sin(ang) * (w.s / 100) * 50;
   return (
-    <div className="wheel-wrap">
+    <div className="wheel-wrap" data-ctl={`wheel-${region}`}>
       <div className="wheel-label">{label}</div>
       <div
         className="wheel"
@@ -51,6 +51,7 @@ function Wheel({ region, label, size }: { region: Region; label: string; size: n
         H {w.h}° · S {w.s}
       </div>
       <PSlider
+        id={`${region}-luminance`}
         label="Luminance"
         get={(p) => (p.grading[region] as WheelHSL).l}
         set={(p, v) => (p.grading[region] = { ...p.grading[region], l: v })}

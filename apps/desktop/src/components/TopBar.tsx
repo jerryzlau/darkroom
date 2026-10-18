@@ -51,6 +51,11 @@ export function TopBar() {
         <span className="sep">|</span>
         {tab('develop', 'Develop', 'D')}
       </nav>
+      <button className="tool-search" onClick={() => useUi.getState().setPalette(true)} title="Search tools, panels and actions (⌘K)">
+        <span className="tool-search-icon">⌕</span>
+        <span className="tool-search-text">Search tools…</span>
+        <kbd>⌘K</kbd>
+      </button>
       <div className="top-actions">
         <button className="icon-btn" title="Filter library…" onClick={() => openDialog('filterLibrary', { ids: useLibrary.getState().targetIds() })}>
           ◧ Filters

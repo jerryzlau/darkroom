@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { slug } from '../lib/commands';
+import { onReveal } from '../state/reveal';
 
 // ---------------------------------------------------------------------------
 // Slider
@@ -22,6 +24,8 @@ export interface SliderProps {
   fromPos?: (t: number) => number;
   disabled?: boolean;
   title?: string;
+  /** `data-ctl` for the command palette (default: the label's slug); must be unique within its section */
+  id?: string;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -131,7 +135,7 @@ export function Slider(p: SliderProps) {
   };
 
   return (
-    <div className={`slider ${p.disabled ? 'disabled' : ''}`} onWheel={onWheel} title={p.title}>
+    <div className={`slider ${p.disabled ? 'disabled' : ''}`} onWheel={onWheel} title={p.title} data-ctl={p.id ?? slug(p.label)}>
       <div className="slider-head">
         <label onDoubleClick={reset} title="Double-click to reset">
           {p.label}
@@ -222,8 +226,9 @@ export function Section(props: {
       /* ignore */
     }
   }, [open, key]);
+  useEffect(() => onReveal(props.id, () => setOpen(true)), [props.id]);
   return (
-    <section className={`panel-section ${open ? 'open' : ''}`}>
+    <section className={`panel-section ${open ? 'open' : ''}`} data-section={props.id}>
       <header onClick={() => setOpen(!open)}>
         <span className="chev">{open ? '▾' : '▸'}</span>
         <span className="title">

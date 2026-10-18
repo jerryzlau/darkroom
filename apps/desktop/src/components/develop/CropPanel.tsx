@@ -50,7 +50,7 @@ export function CropPanel() {
 
   return (
     <Section id="crop" title="Crop & Straighten">
-      <div className="row">
+      <div className="row" data-ctl="aspect">
         <span className="row-label">Aspect</span>
         <select value={aspectValue} onChange={(e) => setAspect(e.target.value)}>
           {ASPECT_PRESETS.map((a) => (
@@ -74,7 +74,7 @@ export function CropPanel() {
         signedDigits={1}
         commitLabel="Straighten"
       />
-      <div className="btn-row">
+      <div className="btn-row" data-ctl="rotate">
         <button onClick={() => rotate(-1)} title="Rotate left ([ with ⌘)">
           ⟲ 90°
         </button>
@@ -84,7 +84,7 @@ export function CropPanel() {
         <button onClick={() => flip('h')}>Flip H</button>
         <button onClick={() => flip('v')}>Flip V</button>
       </div>
-      <div className="btn-row">
+      <div className="btn-row" data-ctl="crop-actions">
         <button
           onClick={() =>
             st().setAndCommit((p) => {

@@ -50,7 +50,7 @@ export function MasksPanel() {
 
   return (
     <Section id="masks" title="Masks">
-      <div className="btn-row">
+      <div className="btn-row" data-ctl="add-mask">
         <button onClick={() => add('linear')} title="Linear gradient">
           ▤ Linear
         </button>
@@ -168,7 +168,7 @@ export function MasksPanel() {
               )}
             </div>
           )}
-          <div className="subhead">
+          <div className="subhead" data-ctl="range">
             <span>Range</span>
             <Seg
               small
@@ -195,7 +195,7 @@ export function MasksPanel() {
               <PSlider label="Tolerance" get={(p) => p.masks[idx]?.range.amount ?? 50} set={(p, v) => (p.masks[idx].range.amount = v)} min={0} max={100} defaultValue={50} commitLabel="Range" />
             </>
           )}
-          <div className="subhead">
+          <div className="subhead" data-ctl="adjustments">
             <span>Adjustments</span>
             <button className="link-btn" onClick={() => patch((m) => Object.keys(m.adj).forEach((k) => ((m.adj as unknown as Record<string, number>)[k] = 0)), 'Reset Mask Adjustments')}>
               Reset

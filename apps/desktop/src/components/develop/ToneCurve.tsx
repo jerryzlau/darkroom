@@ -1,5 +1,6 @@
 import { IDENTITY_CURVE, monotoneSpline, paramsEqual, parametricCurve, type Pt } from '@darkroom/core';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { onReveal } from '../../state/reveal';
 import { useDevelop } from '../../state/develop';
 import { useHistogram } from '../DevelopCanvas';
 import { Section, Seg } from '../ui';
@@ -14,6 +15,7 @@ export function ToneCurvePanel() {
   const base = useDevelop((s) => s.base.toneCurve);
   const [mode, setMode] = useState<'point' | 'parametric'>('point');
   const [ch, setCh] = useState<Ch>('rgb');
+  useEffect(() => onReveal('tonecurve', (c) => c && setMode(c === 'curve' ? 'point' : 'parametric')), []);
   const st = useDevelop.getState;
   return (
     <Section
@@ -145,7 +147,7 @@ function CurveEditor({ mode, ch }: { mode: 'point' | 'parametric'; ch: Ch }) {
   };
 
   return (
-    <div className="curve-editor">
+    <div className="curve-editor" data-ctl="curve">
       <svg ref={svg} viewBox={`0 0 ${S} ${S}`} width="100%" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onDoubleClick={onDouble}>
         <rect x={0} y={0} width={S} height={S} fill="#1a1a1c" />
         {hist && <path d={hist} fill="rgba(255,255,255,0.08)" />}

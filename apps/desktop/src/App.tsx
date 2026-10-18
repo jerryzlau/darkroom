@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { CommandPalette } from './components/CommandPalette';
 import { DevelopCanvas } from './components/DevelopCanvas';
 import { DialogHost } from './components/dialogs/Dialogs';
 import { useDialogs } from './components/dialogs/dialogState';
@@ -81,6 +82,7 @@ export function App() {
         </footer>
       )}
       <DialogHost />
+      <CommandPalette />
       <Toasts />
     </div>
   );

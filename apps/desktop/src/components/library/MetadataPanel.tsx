@@ -56,11 +56,11 @@ export function MetadataPanel() {
   return (
     <>
       <Section id="lib-info" title={selectedCount > 1 ? `Metadata · ${selectedCount} selected` : 'Metadata'}>
-        <div className="row">
+        <div className="row" data-ctl="rating">
           <span className="row-label">Rating</span>
           <Stars value={img.rating} onChange={(r) => lib().setRating(r)} />
         </div>
-        <div className="row">
+        <div className="row" data-ctl="flag">
           <span className="row-label">Flag</span>
           <span className="flag-btns">
             <button className={img.flag === 1 ? 'active' : ''} onClick={() => lib().setFlag(img.flag === 1 ? 0 : 1)} title="Pick (P)">

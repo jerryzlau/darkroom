@@ -26,6 +26,16 @@ export async function startImportFiles() {
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // ⌘K: command palette (works from text fields too, never over a dialog)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+        if (useDialogs.getState().name) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const ui = useUi.getState();
+        ui.setPalette(!ui.paletteOpen);
+        return;
+      }
+      if (useUi.getState().paletteOpen) return;
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       if (useDialogs.getState().name) return;

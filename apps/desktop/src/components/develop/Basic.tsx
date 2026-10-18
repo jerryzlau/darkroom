@@ -48,7 +48,7 @@ export function BasicPanel() {
         st().commit('Reset Basic');
       }}
     >
-      <div className="row">
+      <div className="row" data-ctl="treatment">
         <span className="row-label">Treatment</span>
         <Seg
           small
@@ -60,7 +60,7 @@ export function BasicPanel() {
           onChange={(v) => st().setAndCommit((q) => (q.treatment = v), v === 'bw' ? 'Black & White' : 'Color')}
         />
       </div>
-      <div className="row">
+      <div className="row" data-ctl="wb">
         <span className="row-label">WB</span>
         <select value={wbMode} onChange={(e) => setWbPreset(e.target.value)}>
           <option value="asShot">As Shot</option>

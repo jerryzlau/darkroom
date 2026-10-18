@@ -1,5 +1,6 @@
 import { HSL_BANDS, HSL_BAND_CENTERS, paramsEqual } from '@darkroom/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { onReveal } from '../../state/reveal';
 import { useDevelop } from '../../state/develop';
 import { Section, Seg } from '../ui';
 import { PSlider } from './PSlider';
@@ -11,6 +12,14 @@ export function ColorMixerPanel() {
   const p = useDevelop((s) => s.params);
   const base = useDevelop((s) => s.base);
   const [tab, setTab] = useState<'hue' | 'sat' | 'lum'>('hue');
+  useEffect(
+    () =>
+      onReveal('colormixer', (c) => {
+        const t = c?.split('-')[0];
+        if (t === 'hue' || t === 'sat' || t === 'lum') setTab(t);
+      }),
+    [],
+  );
   const st = useDevelop.getState;
   const bw = p.treatment === 'bw';
   if (bw) {
@@ -62,6 +71,7 @@ export function ColorMixerPanel() {
         return (
           <PSlider
             key={`${tab}-${b}`}
+            id={`${tab}-${b}`}
             label={name(b)}
             get={(q) => q.hsl[tab][i]}
             set={(q, v) => (q.hsl[tab][i] = v)}

@@ -33,6 +33,9 @@ interface UiState {
   aiOpen: boolean;
   /** Active tab of the AI Edit dock */
   aiTab: AiTab;
+  /** command palette (⌘K) */
+  paletteOpen: boolean;
+  setPalette(open: boolean): void;
   setModule(m: Module): void;
   toggle(panel: 'leftOpen' | 'rightOpen' | 'filmstripOpen'): void;
   toggleAi(open?: boolean): void;
@@ -46,6 +49,8 @@ export const useUi = create<UiState>((set, get) => ({
   filmstripOpen: true,
   aiOpen: loadAiOpen(),
   aiTab: loadAiTab(),
+  paletteOpen: false,
+  setPalette: (paletteOpen) => set({ paletteOpen }),
   setModule: (module) => set({ module }),
   toggle: (panel) => set({ [panel]: !get()[panel] } as Partial<UiState>),
   toggleAi: (open) => {

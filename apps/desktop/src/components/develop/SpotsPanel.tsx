@@ -42,7 +42,7 @@ export function SpotsPanel() {
   const cur = active ? { mode: active.mode, r: active.r, feather: active.feather, opacity: active.opacity } : settings;
   return (
     <Section id="spots" title="Spot Removal">
-      <div className="row">
+      <div className="row" data-ctl="mode">
         <span className="row-label">Mode</span>
         <Seg
           small
@@ -57,7 +57,7 @@ export function SpotsPanel() {
       <Slider label="Size" value={Math.round(cur.r * 1000) / 10} min={0.1} max={15} step={0.1} defaultValue={1.2} format={(v) => `${v.toFixed(1)}%`} onChange={(v) => change({ r: v / 100 }, false)} onCommit={() => active && st().commit('Spot Size')} />
       <Slider label="Feather" value={Math.round(cur.feather * 100)} min={0} max={100} defaultValue={50} onChange={(v) => change({ feather: v / 100 }, false)} onCommit={() => active && st().commit('Spot Feather')} />
       <Slider label="Opacity" value={Math.round(cur.opacity * 100)} min={1} max={100} defaultValue={100} onChange={(v) => change({ opacity: v / 100 }, false)} onCommit={() => active && st().commit('Spot Opacity')} />
-      <div className="btn-row">
+      <div className="btn-row" data-ctl="spot-actions">
         <button disabled={!active || picking} onClick={() => void repick()} title="Pick the clone source again from the surrounding skin">
           Auto source
         </button>

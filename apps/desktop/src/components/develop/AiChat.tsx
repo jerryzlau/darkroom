@@ -35,7 +35,7 @@ export function AiDock() {
   const streaming = status === 'streaming';
   const busy = streaming || guidedPhase === 'analyzing' || genPhase !== 'idle';
   return (
-    <section className={`ai-dock ${open ? 'open' : ''}`}>
+    <section className={`ai-dock ${open ? 'open' : ''}`} data-section="ai">
       <header className="ai-head" onClick={() => toggleAi()} title="AI Edit (⌘J)">
         <span className="chev">{open ? '▾' : '▸'}</span>
         <span className="title">AI Edit</span>
