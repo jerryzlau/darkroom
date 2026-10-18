@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { searchSpotSource } from '../../lib/healSpot';
 import { useDevelop } from '../../state/develop';
 import { Section, Seg, Slider } from '../ui';
 
@@ -6,6 +8,7 @@ export function SpotsPanel() {
   const activeId = useDevelop((s) => s.activeSpotId);
   const settings = useDevelop((s) => s.spot);
   const st = useDevelop.getState;
+  const [picking, setPicking] = useState(false);
   const active = spots.find((s) => s.id === activeId) ?? null;
   // edits apply to the selected spot and become the default for new ones
   const change = (patch: Partial<typeof settings>, commit: boolean) => {
@@ -16,6 +19,24 @@ export function SpotsPanel() {
         if (s) Object.assign(s, patch);
       });
       if (commit) st().commit('Edit Spot');
+    }
+  };
+  const repick = async () => {
+    if (!active || picking) return;
+    const { imageId, source } = st();
+    setPicking(true);
+    try {
+      const found = await searchSpotSource(st().params, active, active.id);
+      const d = st();
+      if (!found || d.imageId !== imageId || d.source !== source) return;
+      d.setAndCommit((p) => {
+        const s = p.spots.find((x) => x.id === active.id);
+        if (s) [s.sx, s.sy] = found;
+      }, 'Spot Source');
+    } catch (err) {
+      console.warn('heal source', err);
+    } finally {
+      setPicking(false);
     }
   };
   const cur = active ? { mode: active.mode, r: active.r, feather: active.feather, opacity: active.opacity } : settings;
@@ -37,6 +58,9 @@ export function SpotsPanel() {
       <Slider label="Feather" value={Math.round(cur.feather * 100)} min={0} max={100} defaultValue={50} onChange={(v) => change({ feather: v / 100 }, false)} onCommit={() => active && st().commit('Spot Feather')} />
       <Slider label="Opacity" value={Math.round(cur.opacity * 100)} min={1} max={100} defaultValue={100} onChange={(v) => change({ opacity: v / 100 }, false)} onCommit={() => active && st().commit('Spot Opacity')} />
       <div className="btn-row">
+        <button disabled={!active || picking} onClick={() => void repick()} title="Pick the clone source again from the surrounding skin">
+          Auto source
+        </button>
         <button
           disabled={!active}
           onClick={() => {
@@ -50,7 +74,7 @@ export function SpotsPanel() {
           Clear all ({spots.length})
         </button>
       </div>
-      <div className="hint">Click a blemish to remove it. Drag the solid circle to move the spot and the dashed circle to pick a different source. [ and ] change the size, ⌫ deletes the selected spot.</div>
+      <div className="hint">Click a blemish to remove it. The source is chosen automatically from the surrounding skin; drag the dashed circle to pick a different one, or use Auto source to re-pick it. Drag the solid circle to move the spot. [ and ] change the size, ⌫ deletes the selected spot.</div>
     </Section>
   );
 }

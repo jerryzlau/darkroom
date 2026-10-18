@@ -1,5 +1,6 @@
 import { newMaskId, type Spot } from '@darkroom/core';
 import { useRef, useState } from 'react';
+import { searchSpotSource } from '../lib/healSpot';
 import { useDevelop } from '../state/develop';
 import type { ViewMapper } from './DevelopCanvas';
 
@@ -36,14 +37,22 @@ export function SpotOverlay({ mapper }: { mapper: ViewMapper }) {
   };
   const st = useDevelop.getState;
 
-  const onDown = (e: React.PointerEvent) => {
+  const onDown = async (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     const p = local(e);
     const [u, v] = mapper.toSource(p[0], p[1]);
     if (u < 0 || v < 0 || u > 1 || v > 1) return;
-    const sp = st().spot;
-    const [sx, sy] = autoSource(u, v, sp.r, mapper.info);
+    const s0 = st();
+    const { imageId, source } = s0;
+    const sp = s0.spot;
+    // content-aware source from the surrounding skin; geometric fallback when the render/search fails
+    const found = await searchSpotSource(s0.params, { x: u, y: v, r: sp.r, feather: sp.feather }).catch((err) => {
+      console.warn('heal source', err);
+      return null;
+    });
+    if (st().imageId !== imageId || st().source !== source) return;
+    const [sx, sy] = found ?? autoSource(u, v, sp.r, mapper.info);
     const spot: Spot = { id: newMaskId(), mode: sp.mode, x: u, y: v, sx, sy, r: sp.r, feather: sp.feather, opacity: sp.opacity };
     st().setAndCommit((q) => q.spots.push(spot), sp.mode === 'heal' ? 'Heal Spot' : 'Clone Spot');
     st().setActiveSpot(spot.id);
